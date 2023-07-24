@@ -1,0 +1,19 @@
+name: Create Tag
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - id: autotag
+        uses: Klemensas/action-autotag@stable
+        with:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
+          tag_prefix: 'v'
+      - name: Get the tagname output
+        run: echo "The tagname is ${{ steps.autotag.outputs.tagname }}"
