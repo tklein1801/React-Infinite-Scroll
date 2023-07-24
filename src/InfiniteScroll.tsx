@@ -1,4 +1,6 @@
 import React from 'react';
+import { Box, CircularProgress } from '@mui/material';
+import { throttle } from 'lodash';
 
 type Photo = {
   albumId: number;
@@ -10,54 +12,102 @@ type Photo = {
 
 type ReducerState = {
   start: number;
-  end: number;
   data: Photo[];
 };
 
-type ReducerAction = {
-  type: 'CLEAR';
+type ReducerAction =
+  | { type: 'CLEAR' }
+  | { type: 'UPDATE'; data: ReducerState['data']; increasedBy: number };
+
+const DefaultReducerState: ReducerState = {
+  start: 0,
+  data: [],
 };
 
 function Reducer(state: ReducerState, action: ReducerAction): ReducerState {
   switch (action.type) {
+    case 'UPDATE':
+      return { data: [...state.data, ...action.data], start: state.start + action.increasedBy };
+
     case 'CLEAR':
-      return { start: 0, end: 0, data: [] };
+      return DefaultReducerState;
 
     default:
       throw new Error('Method not implemented');
   }
 }
 
-const InfiniteScroll = () => {
-  const [isLoading, setIsLoading] = React.useState(false);
-  const [{}, setA] = React.useReducer(Reducer, {
-    start: 0,
-    end: 10,
-    data: [],
-  } as ReducerState);
-  const [data, setData] = React.useState<Photo[]>([]);
+export type InfiniteScrollProps = {
+  scrollOffset?: number;
+  earlyLoading?: 0 | 0.1 | 0.2 | 0.3 | 0.4 | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 | 1;
+  loadMaxItems?: number;
+};
 
-  // Simulated data source for demonstration purposes
-  const fetchMoreData = () => {
-    // // Simulate API call or data fetch
-    // const newData = [...data];
-    // for (let i = 0; i < 100; i++) {
-    //   newData.push(`Item ${data.length + i + 1}`);
-    // }
-    // setData(newData);
-    // setIsLoading(false);
-  };
+const InfiniteScroll: React.FC<InfiniteScrollProps> = ({
+  scrollOffset,
+  earlyLoading,
+  loadMaxItems,
+}) => {
+  const [loading, setLoading] = React.useState(false);
+  const [shouldFetchData, setShouldFetchData] = React.useState(true); // load initial data
+  const [photos, setPhotos] = React.useReducer(Reducer, DefaultReducerState);
 
-  // Function to check if user has reached the bottom of the page
-  const handleScroll = () => {
+  const fetchData = throttle(
+    async function (increaseBy = 50) {
+      try {
+        if (loadMaxItems && loadMaxItems < photos.start + increaseBy) return;
+
+        setLoading(true);
+        const response = await fetch(
+          `https://jsonplaceholder.typicode.com/photos?_start=${photos.start}&_limit=${increaseBy}`
+        ).then((response) => response.json());
+        setPhotos({ type: 'UPDATE', data: response as Photo[], increasedBy: increaseBy });
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+        setShouldFetchData(false);
+      }
+    },
+    2 * 1000,
+    { trailing: false }
+  );
+
+  const handleScroll = React.useCallback(() => {
+    // @ts-expect-error
+    const layoutFooterHeight = document.querySelector('#layout-footer')?.offsetHeight;
     const { scrollTop, clientHeight, scrollHeight } = document.documentElement;
 
-    if (scrollHeight - scrollTop === clientHeight) {
-      setIsLoading(true);
-    }
-  };
+    // scrollTop = wie weit habe von der oberen Kante meines Fensters nach unten gescrolllt
+    // clientHeight = wie hoch ist mein fenster
+    // scrollHeight = wie weit kann ich bis zur untersten Kante scrollen
+    const currentScrollProgress = clientHeight + scrollTop;
+    // console.log(scrollOffset);
+    // FIXME: scrollOffset not working even with React.useCallback
+    const scrollProgressWithOffset = scrollOffset
+      ? currentScrollProgress + scrollOffset
+      : currentScrollProgress;
+    // console.log(currentScrollProgress, scrollProgressWithOffset);
 
-  // Attach event listener when the component mounts
+    // if we want to trigger the loading earlier in order to provide an seamless transition
+    const scrollProgressWithEarlyLoading = earlyLoading
+      ? scrollProgressWithOffset * (1 + earlyLoading)
+      : scrollProgressWithOffset;
+
+    // console.log(scrollProgressWithOffset, scrollProgressWithEarlyLoading, earlyLoading);
+
+    // console.log({
+    //   scrollHeight,
+    //   currentScrollProgress,
+    //   scrollProgressWithEarlyLoading,
+    // });
+    // console.log(scrollHeight <= currentScrollProgress * 1.1);
+
+    if (scrollHeight <= scrollProgressWithEarlyLoading) {
+      setShouldFetchData(true);
+    }
+  }, [scrollOffset, earlyLoading]);
+
   React.useEffect(() => {
     window.addEventListener('scroll', handleScroll);
     return () => {
@@ -65,25 +115,26 @@ const InfiniteScroll = () => {
     };
   }, []);
 
-  // Fetch more data when isLoading changes
   React.useEffect(() => {
-    if (isLoading) {
-      fetchMoreData();
+    if (shouldFetchData) {
+      fetchData(50);
     }
-  }, [isLoading]);
-
-  React.useEffect(() => {
-    fetchMoreData();
-  }, []);
+  }, [shouldFetchData]);
 
   return (
     <div>
       <ul>
-        {data.map((item, index) => (
-          <li key={index}>{item}</li>
+        {photos.data.map((item, index) => (
+          <li key={index}>
+            {item.id} + {item.title}
+          </li>
         ))}
       </ul>
-      {isLoading && <p>Loading...</p>}
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
+          <CircularProgress size={35} />
+        </Box>
+      )}
     </div>
   );
 };
